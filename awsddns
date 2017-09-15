@@ -1,0 +1,54 @@
+#! /bin/bash
+#
+# @(#) awsddns -- Dynamic DNS for AWS
+#
+# chkconfig: 123456 99 49
+#
+set -o errexit
+set -o nounset
+
+case $1 in
+  start) Action='UPSERT' ; lock='touch --' ;;
+  stop) Action='DELETE' ; lock='rm --force --' ;;
+  *) exit ;;
+esac
+
+export PATH="$PATH:/opt/aws/bin"
+
+# Get RecordSetGroups from Metadata
+export AWS_DEFAULT_OUTPUT='text'
+export AWS_DEFAULT_REGION="$(curl --silent http://169.254.169.254/latest/meta-data/placement/availability-zone | sed -e 's/[a-z]$//')"
+read -r StackName LogicalResourceId \
+     < <(aws --query "Reservations|[0].Instances|[0].[ \
+                        Tags[?Key=='aws:cloudformation:stack-name'].Value|[0], \
+                        Tags[?Key=='aws:cloudformation:logical-id'].Value|[0]]" \
+           ec2 describe-instances \
+           --instance-ids="$(curl --silent http://169.254.169.254/latest/meta-data/instance-id)")
+RecordSetGroups="$(cfn-get-metadata --region="$AWS_DEFAULT_REGION" --stack="$StackName" --resource="$LogicalResourceId" --key=RecordSetGroups)"
+
+# Reevaluate as shell string
+RecordSetGroups="$(printf 'cat - <<END_OF_REEVALUATE_STRING\n%s\nEND_OF_REEVALUATE_STRING\n' "$RecordSetGroups")"
+RecordSetGroups="$(eval "$RecordSetGroups")"
+
+# Create change batch with some fixes and apply
+python /dev/stdin "$Action" "$RecordSetGroups" <<'END_OF_SCRIPT' | while read -r HostedZoneId changeBatch
+import sys
+import json
+RecordSetGroups = json.loads(sys.argv[2])
+for RecordSetGroup in RecordSetGroups:
+    result = {'Changes': []}
+    for RecordSet in RecordSetGroup['RecordSets']:
+        for key in ['TTL', 'Weight']:
+            if key in RecordSet:
+                RecordSet[key] = int(RecordSet[key])
+        for i in range(len(RecordSet['ResourceRecords'])):
+            RecordSet['ResourceRecords'][i] = {'Value': RecordSet['ResourceRecords'][i]}
+        result['Changes'].append({'Action': sys.argv[1], 'ResourceRecordSet': RecordSet})
+    print RecordSetGroup['HostedZoneId'], json.dumps(result)
+END_OF_SCRIPT
+do
+  aws route53 change-resource-record-sets --hosted-zone-id "$HostedZoneId" --change-batch "$changeBatch"
+done
+
+# Change lock status
+$lock /var/lock/subsys/awsddns
