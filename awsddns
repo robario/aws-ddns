@@ -10,6 +10,7 @@ set -o nounset
 case $1 in
   start) Action='UPSERT' ; lock='touch --' ;;
   stop) Action='DELETE' ; lock='rm --force --' ;;
+  status) [[ -f /var/lock/subsys/awsddns ]] && exit 0 || exit 3 ;;
   *) exit ;;
 esac
 
