@@ -7,11 +7,44 @@
 set -o errexit
 set -o nounset
 
-case $1 in
-  start) Action='UPSERT' ; lock='touch --' ;;
-  stop) Action='DELETE' ; lock='rm --force --' ;;
-  status) [[ -f /var/lock/subsys/awsddns ]] && exit 0 || exit 3 ;;
-  *) exit ;;
+case ${1-} in
+  start)
+    if [[ -f /var/lock/subsys/awsddns ]]
+    then
+      exit 0
+    fi
+    Action='CREATE'
+    lock='touch --'
+    ;;
+  stop)
+    if [[ ! -f /var/lock/subsys/awsddns ]]
+    then
+      exit 0
+    fi
+    Action='DELETE'
+    lock='rm --force --'
+    ;;
+  restart)
+    "$0" stop
+    "$0" start
+    exit $?
+    ;;
+  force-reload|reload)
+    Action='UPSERT'
+    lock='touch --'
+    ;;
+  status)
+    if [[ -f /var/lock/subsys/awsddns ]]
+    then
+      exit 0
+    else
+      exit 3
+    fi
+    ;;
+  *)
+    printf 'Usage: awsddns {start|stop|restart|force-reload|status}\n'
+    exit 0
+    ;;
 esac
 
 export PATH="$PATH:/opt/aws/bin"
