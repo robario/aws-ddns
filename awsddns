@@ -2,7 +2,7 @@
 #
 # @(#) awsddns -- Dynamic DNS for AWS
 #
-# chkconfig: 123456 99 49
+# chkconfig: 2345 99 49
 #
 set -o errexit
 set -o nounset
